@@ -41,7 +41,7 @@ class Connection:
             self.reader, self.writer = await aio.open_connection('127.0.0.1', port)
             aio.create_task(self._run())
             return None
-        except (TimeoutError, OSError) as e:
+        except (TimeoutError, OSError):
             return CheckErr("Unable to connect to the server", port_id=self.port_id)
 
     def send(self, pkt: bytes) -> CheckErr | None:
@@ -104,7 +104,7 @@ class Executor:
     input_text: str
     conn_cnt: int
     conns: list[Connection]
-    server_task: aio.Task[tuple[bytes, bytes]]
+    server_task: aio.Task[tuple[bytes, bytes]] | None
 
     async def exec_server(self, path: str, prog_input: bytes):
         self.running = True
@@ -123,6 +123,9 @@ class Executor:
         self.server_task = aio.create_task(wait_for_exit())
 
     def parse_setting(self):
+        """
+        Parse the test case setting JSON file.
+        """
         with open(self.setting_path) as f:
             self.setting = json.load(fp=f)
         input_str = self.setting['input']
@@ -138,6 +141,13 @@ class Executor:
             self.conn_cnt += 1
 
     async def start(self, start_server: bool) -> CheckErr | None:
+        """
+        Start the server program and execute the test
+
+        :param start_server: True if the test script starts the server as a new process.
+            False if the test script connects to a running server.
+        :return: the first error occurred in the test.
+        """
         # Setup server
         if start_server:
             await self.exec_server(self.server_path, self.input_text.encode('utf-8'))
@@ -171,6 +181,11 @@ class Executor:
                 print(f'Passed check point {check_point_cnt}')
 
     async def clean_up(self) -> tuple[bytes, bytes]:
+        """
+        Shutdown connections and kill the program started.
+
+        :return: server's output in stdout and stderr.
+        """
         for conn in reversed(self.conns):
             await conn.shutdown()
             await aio.sleep(0.05)
@@ -196,10 +211,10 @@ class Executor:
 
 async def main():
     if len(sys.argv) < 3:
-        print('Usage: python3 executor.py <path-to-setting.json> <path-to-server>')
+        print('Usage: python3 executor.py <path-to-server> <path-to-setting.json>')
         return
 
-    executor = Executor(sys.argv[1], sys.argv[2])
+    executor = Executor(sys.argv[2], sys.argv[1])
     executor.parse_setting()
     err = await executor.start(True)  # Set this to False to manually start your server
     pout, perr = await executor.clean_up()

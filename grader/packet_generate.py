@@ -19,25 +19,48 @@ IP_HDR_FORMAT = '!BBHHHBBHII'
 
 
 def ip_to_num(ip: str) -> int:
+    """
+    Convert an IP address from string into Uint32
+
+    :param ip: IP address in string
+    :return: an uint32 representing the IP address (parsed from big endian).
+    """
     vals = [int(x) for x in ip.split('.')]
     return (vals[0] << 24) | (vals[1] << 16) | (vals[2] << 8) | (vals[3])
 
 
 class Checksum:
+    """
+    The class to compute IP/TCP/UDP checksum
+    """
     val: int = 0
 
     def __init__(self):
         self.val = 0
 
     def add(self, buf: memoryview):
+        """
+        Add another buffer covered by the checksum
+
+        :param buf: the buffer
+        """
+        # Treat the buffer as uint16 array and sum the values
         for i in range(0, len(buf) - 1, 2):
             self.val += (buf[i] << 8) + (buf[i + 1])
+        # The last byte
         if len(buf) % 2 == 1:
             self.val += (buf[-1] << 8)
 
     def finish(self) -> int:
+        """
+        Return the result.
+
+        :return: the checksum number. Irrelevant of the endian.
+        """
+        # Add the carries back. The loop runs at most twice.
         while self.val > 0xFFFF:
             self.val = (self.val >> 16) + (self.val & 0xFFFF)
+        # The checksum result is the sum's one's complement.
         return ~self.val & 0xFFFF
 
 
@@ -59,6 +82,11 @@ class Packet:
     trans_checksum: int = -1
 
     def serialize(self) -> bytes:
+        """
+        Encode the IP packet into bytes.
+
+        :return: encoded bytes.
+        """
         src_ip_num = ip_to_num(self.src_ip)
         dst_ip_num = ip_to_num(self.dst_ip)
         payload_enc = self.payload.encode('utf-8')
@@ -136,6 +164,12 @@ class Packet:
 
     @classmethod
     def from_json(cls, obj):
+        """
+        Create an IP packet from JSON setting.
+
+        :param obj: the parsed JSON action object.
+        :return: the packet.
+        """
         return cls(obj['src_ip'], obj['src_port'], obj['dst_ip'], obj['dst_port'],
                    obj['proto'], obj['payload'], obj.get('ttl', 64), obj.get('seq', 0),
                    obj.get('ack', 0), obj.get('flag', 0), obj.get('rwnd', 2048),
@@ -146,14 +180,26 @@ class Packet:
 
 
 def print_hex(buf: bytes):
+    """
+    Print a buffer in a hexadecimal format similar to Wireshark.
+
+    :param buf: the buffer to print
+    """
     bstr = buf.hex(' ')
     bstr_list = [bstr[i:i + 24] for i in range(0, len(bstr), 24)]
     lines = [' '.join(bstr_list[j:j + 2]) for j in range(0, len(bstr_list), 2)]
-    for l in lines:
-        print(l)
+    for line in lines:
+        print(line)
 
 
 def separate_ip_packet(buf: bytes) -> bytes | None:
+    """
+    Separate IP datagram boundaries.
+
+    :param buf: the received buffer.
+    :return: The first IP datagram in the buffer.
+        None if the buffer does not contain a whole IP datagram.
+    """
     if len(buf) < IP_HDR_LEN_MIN:
         return None
     # The header len does not matter here
