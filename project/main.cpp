@@ -12,7 +12,7 @@
 
 #define MAXCLIENTS 30
 #define BUFFER_SIZE 1024
-#define DEFAULT_PORT 8080
+#define DEFAULT_PORT 5152
 
 
 
@@ -26,9 +26,21 @@ int main(int argc, char *argv[]) {
     size_t dwPos = szLine.find(' ');
     auto szLanIp = szLine.substr(0, dwPos);
     auto szWanIp = szLine.substr(dwPos + 1);
-
+    
     std::cout << "Server's LAN IP: " << szLanIp << std::endl
               << "Server's WAN IP: " << szWanIp << std::endl;
+    
+    std::string IPClients[10];
+    int i = 0;
+    while (szLine != ""){
+        std::getline(std::cin, szLine);
+        IPClients[i] = szLine;
+        i++;
+    }
+
+    for (int i = 0; i < 10; i++){
+        std::cerr << IPClients[i] << std::endl;
+    }
 
     // TODO: Modify/Add/Delete files under the project folder.
 
@@ -68,7 +80,7 @@ int main(int argc, char *argv[]) {
     addrlen = sizeof(address);
 
     while (1) {
-        // Create an "set" of FD to include all FDs of interest
+        // Create a "set" of FD to include all FDs of interest
         // Clear the set and include them one by one
         FD_ZERO(&readfds);
 
