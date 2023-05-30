@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
             if (sd > 0 && FD_ISSET(sd, &readfds)) {
                 // Receive data from client if there is data
                 std::cout << "Receiving data from: " << IPClients[i] << std::endl;
-                valread = read(sd, buffer, BUFFER_SIZE);
+                valread = recv(sd, buffer, BUFFER_SIZE, 0);
                 std::cout << "read: " << valread << " bytes" << std::endl;
                 buffer[valread] = '\0';
                 printf("Client %d: %s\n", i, buffer);   
@@ -171,6 +171,16 @@ int main(int argc, char *argv[]) {
                 // incomingIpHdr->check = htons(sum);
                 std::cout << "checksum (after): " << incomingIpHdr->check << std::endl;
 
+                //source/destination addresses
+                char saddr[16];
+                char daddr[16];
+                snprintf(saddr, 16, "%pI4", &incomingIpHdr->saddr); // Mind the &!
+                snprintf(daddr, 16, "%pI4", &incomingIpHdr->daddr); // Mind the &!
+
+                // auto saddr = static_cast<size_t>(ntohs(incomingIpHdr->saddr));
+                // auto daddr = static_cast<size_t>(ntohs(incomingIpHdr->daddr));
+
+                std::cout << "source address: " << saddr << " destination address: " << daddr << std::endl;
                 if (incomingIpHdr->protocol == IPPROTO_TCP) {
                 std::cout << "This is a TCP packet" << std::endl;
                 auto incomingTcpHdr = reinterpret_cast<tcphdr*>(pkt.data() + hdrLen);
@@ -182,7 +192,15 @@ int main(int argc, char *argv[]) {
                 }
                 else if (incomingIpHdr->protocol == IPPROTO_UDP) {
                 std::cout << "This is a UDP packet" << std::endl;
+                auto incomingUdpHdr = reinterpret_cast<udphdr*>(pkt.data() + hdrLen);
+                auto sourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
+                auto destPort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_dport));
+                std::cout << "sourePort: "<< sourcePort << " destPort: "<< destPort << std::endl;
                 }
+
+
+                send(client_sockets[2], pkt.data(), pkt.size(), 0);
+                
             }
         }
     }
