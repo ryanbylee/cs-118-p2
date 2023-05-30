@@ -9,6 +9,10 @@
 #include <sys/time.h>
 #include <sys/select.h>
 #include <unistd.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
+#include <vector>
 
 #define MAXCLIENTS 30
 #define BUFFER_SIZE 2048
@@ -31,10 +35,9 @@ int main(int argc, char *argv[]) {
               << "Server's WAN IP: " << szWanIp << std::endl;
     
     std::string IPClients[MAXCLIENTS];
-    int hostCounter = 0;
 
-    //skip WAN address (0.0.0.0)
-    //std::getline(std::cin, szLine);
+    //counter needed for determining number of connections to accept
+    int hostCounter = 0;
 
     while (szLine != ""){
         std::getline(std::cin, szLine);
@@ -42,13 +45,6 @@ int main(int argc, char *argv[]) {
         hostCounter++;
     }
 
-    for (int i = 0; i < hostCounter; i++){
-        std::cerr << IPClients[i] << std::endl;
-    }
-
-    // TODO: Modify/Add/Delete files under the project folder.
-
-    // select.c  --  Demo of using select() to handle multiple clients
     int listening_socket, new_socket, client_sockets[MAXCLIENTS], sd, max_sd;
     int activity, addrlen, valread;
     struct sockaddr_in address;
@@ -83,8 +79,7 @@ int main(int argc, char *argv[]) {
 
     addrlen = sizeof(address);
 
-    
-
+    //accept (hostCounter - 1) number of connections
     for (int i = 0; i < hostCounter - 1; i++){
         new_socket = accept(listening_socket, (struct sockaddr *)&address, (socklen_t *)&addrlen);
 
@@ -96,25 +91,19 @@ int main(int argc, char *argv[]) {
         printf("Client connected, ip: %s, port: %d\n",
                 inet_ntoa(address.sin_addr), ntohs(address.sin_port));
         
+        //add to client_sockets to be used in select() later
         for (int i = 0; i < MAXCLIENTS; i++) {
             if (client_sockets[i] == 0) {
                 client_sockets[i] = new_socket;
-                std::cout << "client's new ip address: " << IPClients[i] << std::endl;
+                std::cout << "client's virtual ip address: " << IPClients[i] << std::endl;
                 break;
             }
         }
     }
-    
-        // Create a "set" of FD to include all FDs of interest
-        // Clear the set and include them one by one
-    while (1) {
-        
-        FD_ZERO(&readfds);
 
-        // Add server listener socket to the set (for demonstration purpose)
-        // There is no need to do it for project 2, as you can wait for all
-        // connections to complete and receive data later
-   
+    while (1) {
+        //zero out the fd_set each loop
+        FD_ZERO(&readfds);
 
         // Include *connected* sockets for clients (those are not 0)
         for (int i = 0; i < MAXCLIENTS; i++) {
@@ -129,19 +118,10 @@ int main(int argc, char *argv[]) {
                 max_sd = sd;
             }
         }
-
-        // Call select function on the set, we are only interested in the read events
-        // so we set all others as 0
-        // It will return when any of the socket in the set has the event
-       
-
-
-        // Accept the connection and store the socket in the array to receive data
-        // from the client
         
-        
-
+        //select() zeros out every fds in fd_set except those that had event 
         activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);
+
         if ((activity < 0) && (errno != EINTR)) {
             perror("select");
         }
@@ -149,20 +129,59 @@ int main(int argc, char *argv[]) {
         // each client
         for (int i = 0; i < MAXCLIENTS; i++) {
             sd = client_sockets[i];
-            //std::cout << "checking socket: " << sd << std::endl;
+
             if (sd > 0 && FD_ISSET(sd, &readfds)) {
                 // Receive data from client if there is data
                 std::cout << "Receiving data from: " << IPClients[i] << std::endl;
                 valread = read(sd, buffer, BUFFER_SIZE);
+                std::cout << "read: " << valread << " bytes" << std::endl;
                 buffer[valread] = '\0';
+                printf("Client %d: %s\n", i, buffer);   
 
-                if (valread == 0) {
-                    close(sd);
-                    client_sockets[i] = 0;
-                } else {
-                    printf("Client %d: %s\n", i, buffer);
-                    
-                    //send(sd, buffer, strlen(buffer), 0);
+                //packet information extraction/analysis (snippet from 1b-starter-main.cpp)
+                std::vector<uint8_t> pkt(buffer, buffer + valread);
+                auto incomingIpHdr = reinterpret_cast<iphdr*>(pkt.data());
+                auto totLen = static_cast<size_t>(ntohs(incomingIpHdr->tot_len));
+                std::cout << "totalLen: "<< totLen << std::endl;
+                std::cout << "protocol: " << static_cast<size_t>(incomingIpHdr->protocol) << std::endl;
+                auto hdrLen = static_cast<size_t>(incomingIpHdr->ihl) * 4;
+                std::cout << "headerLen: " << hdrLen << std::endl;
+                
+                auto ttl = static_cast<size_t>(incomingIpHdr->ttl);
+                std::cout << "ttl: " << ttl << std::endl;
+                incomingIpHdr->ttl -= 1;
+
+                std::cout << "checksum (before): " << incomingIpHdr->check << std::endl;
+                // The checksum field is the 16 bit one's complement of the one's
+                // complement sum of all 16 bit words in the header.  For purposes of
+                // computing the checksum, the value of the checksum field is zero.
+                uint32_t sum = 0;
+                incomingIpHdr->check = 0;
+                for (uint32_t i = 0; i < hdrLen; i += 2) {
+                auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + i);
+                sum += *headerword;
+                // sum += ntohs(*headerword);
+                }
+                while (sum >> 16) {
+                sum = (sum & 0xffff) + (sum >> 16);
+                }
+                // one's complement
+                sum = ~sum;
+                incomingIpHdr->check = sum;
+                // incomingIpHdr->check = htons(sum);
+                std::cout << "checksum (after): " << incomingIpHdr->check << std::endl;
+
+                if (incomingIpHdr->protocol == IPPROTO_TCP) {
+                std::cout << "This is a TCP packet" << std::endl;
+                auto incomingTcpHdr = reinterpret_cast<tcphdr*>(pkt.data() + hdrLen);
+                auto sourcePort = static_cast<size_t>(ntohs(incomingTcpHdr->th_sport));
+                auto destPort = static_cast<size_t>(ntohs(incomingTcpHdr->th_dport));
+                std::cout << "sourePort: "<< sourcePort << " destPort: "<< destPort << std::endl;
+                auto tcpHdrLen = static_cast<size_t>(incomingTcpHdr->th_off) * 4;
+                std::cout << "payloadLen: "<< totLen - hdrLen - tcpHdrLen << std::endl;
+                }
+                else if (incomingIpHdr->protocol == IPPROTO_UDP) {
+                std::cout << "This is a UDP packet" << std::endl;
                 }
             }
         }
