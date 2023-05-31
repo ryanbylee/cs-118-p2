@@ -13,14 +13,11 @@
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 #include <vector>
+#include <unordered_map>
 
 #define MAXCLIENTS 30
 #define BUFFER_SIZE 2048
 #define DEFAULT_PORT 5152
-
-
-
-
 
 int main(int argc, char *argv[]) {
     std::string szLine;
@@ -38,25 +35,22 @@ int main(int argc, char *argv[]) {
 
     //counter needed for determining number of connections to accept
     int hostCounter = 0;
-
+    
     while (szLine != ""){
         std::getline(std::cin, szLine);
         IPClients[hostCounter] = szLine;
         hostCounter++;
     }
+    hostCounter--;
 
-    int listening_socket, new_socket, client_sockets[MAXCLIENTS], sd, max_sd;
+    int listening_socket, new_socket, sd, max_sd;
     int activity, addrlen, valread;
     struct sockaddr_in address;
     fd_set readfds;
     char buffer[BUFFER_SIZE];
-
-    for (int i = 0; i < MAXCLIENTS; i++) {
-        client_sockets[i] = 0;
-    }
-
-    listening_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (listening_socket == 0) {
+    std::unordered_map<std::string, int> client_sockets; /* maps client IP to associated socket file descriptor */
+    
+    if (listening_socket = socket(AF_INET, SOCK_STREAM, 0); listening_socket == 0) {
         perror("socket");
         exit(EXIT_FAILURE);
     }
@@ -75,12 +69,12 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    printf("Waiting for clients on port %d...\n", DEFAULT_PORT);
+    printf("Waiting for %d clients on port %d...\n", hostCounter, DEFAULT_PORT);
 
     addrlen = sizeof(address);
 
-    //accept (hostCounter - 1) number of connections
-    for (int i = 0; i < hostCounter - 1; i++){
+    // accept same number of connections as hostCounter
+    for (int i = 0; i < hostCounter; i++){
         new_socket = accept(listening_socket, (struct sockaddr *)&address, (socklen_t *)&addrlen);
 
         if (new_socket < 0) {
@@ -91,52 +85,40 @@ int main(int argc, char *argv[]) {
         printf("Client connected, ip: %s, port: %d\n",
                 inet_ntoa(address.sin_addr), ntohs(address.sin_port));
         
-        //add to client_sockets to be used in select() later
-        for (int i = 0; i < MAXCLIENTS; i++) {
-            if (client_sockets[i] == 0) {
-                client_sockets[i] = new_socket;
-                std::cout << "client's virtual ip address: " << IPClients[i] << std::endl;
-                break;
-            }
-        }
+        // add to client_sockets to be used in select() later
+        client_sockets[IPClients[i]] = new_socket;
+        std::cout << "client's virtual ip address: " << IPClients[i] << std::endl;
     }
 
     while (1) {
-        //zero out the fd_set each loop
-        FD_ZERO(&readfds);
-
-        // Include *connected* sockets for clients (those are not 0)
-        for (int i = 0; i < MAXCLIENTS; i++) {
-            sd = client_sockets[i];
-
-            if (sd > 0) {
-                FD_SET(sd, &readfds);
-            }
-
-            // Keep track of the maximum value of the included file descriptors
-            if (sd > max_sd) {
+        FD_ZERO(&readfds); /* remove all file descriptors from reading set */
+        
+        for (const auto &c: client_sockets) {
+            sd = c.second;
+            if (sd > 0)
+                FD_SET(sd, &readfds); /* add valid file descriptor to reading set */
+            if (sd > max_sd)
                 max_sd = sd;
-            }
         }
         
         //select() zeros out every fds in fd_set except those that had event 
         activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);
 
-        if ((activity < 0) && (errno != EINTR)) {
+        if ((activity < 0) && (errno != EINTR))
             perror("select");
-        }
+        
         // Check the connection sockets to see if there is incoming data from
         // each client
-        for (int i = 0; i < MAXCLIENTS; i++) {
-            sd = client_sockets[i];
+        for (const auto &c: client_sockets) {
+            sd = c.second;
 
             if (sd > 0 && FD_ISSET(sd, &readfds)) {
                 // Receive data from client if there is data
-                std::cout << "Receiving data from: " << IPClients[i] << std::endl;
+                std::cout << "Receiving data from: " << c.first << std::endl;
                 valread = recv(sd, buffer, BUFFER_SIZE, 0);
                 std::cout << "read: " << valread << " bytes" << std::endl;
                 buffer[valread] = '\0';
-                printf("Client %d: %s\n", i, buffer);   
+                printf("data: %s\n", buffer);   
 
                 //packet information extraction/analysis (snippet from 1b-starter-main.cpp)
                 std::vector<uint8_t> pkt(buffer, buffer + valread);
@@ -158,12 +140,12 @@ int main(int argc, char *argv[]) {
                 uint32_t sum = 0;
                 incomingIpHdr->check = 0;
                 for (uint32_t i = 0; i < hdrLen; i += 2) {
-                auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + i);
-                sum += *headerword;
-                // sum += ntohs(*headerword);
+                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + i);
+                    sum += *headerword;
+                    // sum += ntohs(*headerword);
                 }
                 while (sum >> 16) {
-                sum = (sum & 0xffff) + (sum >> 16);
+                    sum = (sum & 0xffff) + (sum >> 16);
                 }
                 // one's complement
                 sum = ~sum;
@@ -171,36 +153,35 @@ int main(int argc, char *argv[]) {
                 // incomingIpHdr->check = htons(sum);
                 std::cout << "checksum (after): " << incomingIpHdr->check << std::endl;
 
-                //source/destination addresses
-                char saddr[16];
-                char daddr[16];
-                snprintf(saddr, 16, "%pI4", &incomingIpHdr->saddr); // Mind the &!
-                snprintf(daddr, 16, "%pI4", &incomingIpHdr->daddr); // Mind the &!
-
-                // auto saddr = static_cast<size_t>(ntohs(incomingIpHdr->saddr));
-                // auto daddr = static_cast<size_t>(ntohs(incomingIpHdr->daddr));
-
-                std::cout << "source address: " << saddr << " destination address: " << daddr << std::endl;
+                // source and destination IP addresses
+                struct in_addr source, destination;
+                source.s_addr = incomingIpHdr->saddr;
+                destination.s_addr = incomingIpHdr->daddr;                                
+                std::cout << "source address: " << inet_ntoa(source) << " destination address: " << inet_ntoa(destination) << std::endl;
+                
+                // TCP or UDP protocol
                 if (incomingIpHdr->protocol == IPPROTO_TCP) {
-                std::cout << "This is a TCP packet" << std::endl;
-                auto incomingTcpHdr = reinterpret_cast<tcphdr*>(pkt.data() + hdrLen);
-                auto sourcePort = static_cast<size_t>(ntohs(incomingTcpHdr->th_sport));
-                auto destPort = static_cast<size_t>(ntohs(incomingTcpHdr->th_dport));
-                std::cout << "sourePort: "<< sourcePort << " destPort: "<< destPort << std::endl;
-                auto tcpHdrLen = static_cast<size_t>(incomingTcpHdr->th_off) * 4;
-                std::cout << "payloadLen: "<< totLen - hdrLen - tcpHdrLen << std::endl;
+                    std::cout << "This is a TCP packet" << std::endl;
+                    auto incomingTcpHdr = reinterpret_cast<tcphdr*>(pkt.data() + hdrLen);
+                    auto sourcePort = static_cast<size_t>(ntohs(incomingTcpHdr->th_sport));
+                    auto destPort = static_cast<size_t>(ntohs(incomingTcpHdr->th_dport));
+                    std::cout << "sourePort: "<< sourcePort << " destPort: "<< destPort << std::endl;
+                    auto tcpHdrLen = static_cast<size_t>(incomingTcpHdr->th_off) * 4;
+                    std::cout << "payloadLen: "<< totLen - hdrLen - tcpHdrLen << std::endl;
                 }
                 else if (incomingIpHdr->protocol == IPPROTO_UDP) {
-                std::cout << "This is a UDP packet" << std::endl;
-                auto incomingUdpHdr = reinterpret_cast<udphdr*>(pkt.data() + hdrLen);
-                auto sourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
-                auto destPort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_dport));
-                std::cout << "sourePort: "<< sourcePort << " destPort: "<< destPort << std::endl;
+                    std::cout << "This is a UDP packet" << std::endl;
+                    auto incomingUdpHdr = reinterpret_cast<udphdr*>(pkt.data() + hdrLen);
+                    auto sourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
+                    auto destPort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_dport));
+                    std::cout << "sourcePort: "<< sourcePort << " destPort: "<< destPort << std::endl;
                 }
-
-
-                send(client_sockets[2], pkt.data(), pkt.size(), 0);
                 
+                if(send(client_sockets[inet_ntoa(destination)], pkt.data(), pkt.size(), 0) == -1)
+                {
+                    perror("send");
+                    exit(EXIT_FAILURE);
+                }
             }
         }
     }
