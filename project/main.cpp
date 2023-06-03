@@ -19,6 +19,13 @@
 #define BUFFER_SIZE 2048
 #define DEFAULT_PORT 5152
 
+//information contained in each entry in NAPT table
+struct napt_entry{
+    std::string lan_ip;
+    std::string lan_port;
+    std::string wan_port;
+};
+
 int main(int argc, char *argv[]) {
     std::string szLine;
 
@@ -32,16 +39,55 @@ int main(int argc, char *argv[]) {
               << "Server's WAN IP: " << szWanIp << std::endl;
     
     std::string IPClients[MAXCLIENTS];
-
+    napt_entry napt_table[MAXCLIENTS];
     //counter needed for determining number of connections to accept
     int hostCounter = 0;
     
-    while (szLine != ""){
+    //parse IP configuration
+    while (1){
         std::getline(std::cin, szLine);
+        if (szLine == ""){
+            break;
+        }
         IPClients[hostCounter] = szLine;
         hostCounter++;
+        
     }
     hostCounter--;
+
+
+
+    //parse Static NAPT table
+    std::cout << "Parsing NAPT Table..." << std::endl;
+    std::string delimiter = " ";
+    std::string infoPerLine[3];
+    int tableEntryNum = 0;
+
+    while (1){
+        napt_entry entry;
+        std::getline(std::cin, szLine);
+        if (szLine == ""){
+            break;
+        }
+        std::cout << szLine << std::endl;
+
+        for (int i = 0; i < 3; i++){
+            infoPerLine[i] = szLine.substr(0, szLine.find(delimiter));
+            szLine.erase(0, szLine.find(delimiter) + delimiter.length());
+        }
+        
+        entry.lan_ip = infoPerLine[0];
+        entry.lan_port = infoPerLine[1];
+        entry.wan_port = infoPerLine[2];
+
+        napt_table[tableEntryNum] = entry;
+        tableEntryNum++;
+        
+    }
+
+    for (int i = 0; i < 2; i++){
+        std::cout << "entry " << i << ": " << napt_table[i].lan_ip << " " << napt_table[i].lan_port << " " << napt_table[i].wan_port << std::endl;
+    }
 
     int listening_socket, new_socket, sd, max_sd;
     int activity, addrlen, valread;
