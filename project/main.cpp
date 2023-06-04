@@ -53,7 +53,8 @@ int main(int argc, char *argv[]) {
         hostCounter++;
         
     }
-
+    //hardcode WAN address
+    IPClients[0] = "10.0.0.10";
 
 
     //parse Static NAPT table
@@ -103,6 +104,15 @@ int main(int argc, char *argv[]) {
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(DEFAULT_PORT);
+    const int yes = 1;
+    if (setsockopt(listening_socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) < 0){
+        perror("server: setsockopt");
+        return 1;
+    }
+    if (setsockopt(listening_socket, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(int)) < 0){
+        perror("server: setsockopt");
+        return 1;
+    }
 
     if (bind(listening_socket, (struct sockaddr *)&address, sizeof(address)) < 0) {
         perror("bind");
@@ -225,7 +235,7 @@ int main(int argc, char *argv[]) {
                 if(send(client_sockets[inet_ntoa(destination)], pkt.data(), pkt.size(), 0) == -1)
                 {
                     perror("send");
-                    exit(EXIT_FAILURE);
+                    close(client_sockets[inet_ntoa(destination)]);
                 }
             }
         }
