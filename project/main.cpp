@@ -177,14 +177,12 @@ int main(int argc, char *argv[]) {
                 std::cout << "Receiving data from: " << c.first << std::endl;
                 valread = recv(sd, buffer, BUFFER_SIZE, 0);
                 if (valread == 0){
-                    std::cout << "valread is zero" << std::endl;
                     close(sd);
                     client_sockets[c.first] = 0;
                     break;
                 }
                 std::cout << "read: " << valread << " bytes" << std::endl;
-                buffer[valread] = '\0';
-                printf("data: %s\n", buffer);   
+                buffer[valread] = '\0';  
 
                 //packet information extraction/analysis (snippet from 1b-starter-main.cpp)
                 std::vector<uint8_t> pkt(buffer, buffer + valread);
@@ -199,6 +197,7 @@ int main(int argc, char *argv[]) {
                 std::cout << "ttl (before): " << ttl << std::endl;
                 if (ttl <= 1) {
                     // TODO: drop
+                    break;
                 }
                 else {
                     incomingIpHdr->ttl -= 1;
