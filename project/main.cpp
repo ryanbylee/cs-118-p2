@@ -262,20 +262,22 @@ int main(int argc, char *argv[]) {
                     pseudo += htons(IPPROTO_TCP); //TCP protocol num 6
                     pseudo += htons(totLen - hdrLen); // tcp header + payload
 
+                    uint16_t tcheck = incomingTcpHdr->th_sum;
                     std::cout << "tcpchecksum (before): " << static_cast<size_t>(incomingTcpHdr->th_sum);
-                    update_checksum(incomingTcpHdr->th_sum, totLen - hdrLen, pkt.data() + hdrLen, pseudo);
-                    std::cout << ", tcpchecksum (after): " << incomingTcpHdr->th_sum << std::endl;
-                    if (incomingTcpHdr->th_sum != 1)
+                    update_checksum(tcheck, totLen - hdrLen, pkt.data() + hdrLen, pseudo);
+                    std::cout << ", tcpchecksum (after): " << tcheck << std::endl;
+                    if (tcheck != 0)
                         break; /* drop if checksum doesn't match */
                 }
                 else if (incomingIpHdr->protocol == IPPROTO_UDP) {
                     pseudo += htons(IPPROTO_UDP); //UDP protocol num 17
                     pseudo += incomingUdpHdr->uh_ulen;
                     
+                    uint16_t ucheck = incomingUdpHdr->uh_sum;
                     std::cout << "udpchecksum (before): " << static_cast<size_t>(incomingUdpHdr->uh_sum);
-                    update_checksum(incomingUdpHdr->uh_sum, totLen - hdrLen, pkt.data() + hdrLen, pseudo);
-                    std::cout << ", udpchecksum: " << incomingUdpHdr->uh_sum << std::endl;
-                    if (incomingUdpHdr->uh_sum != 1)
+                    update_checksum(ucheck, totLen - hdrLen, pkt.data() + hdrLen, pseudo);
+                    std::cout << ", udpchecksum: " << ucheck << std::endl;
+                    if (ucheck != 0)
                         break; /* drop if checksum doesn't match */
                 }
 
@@ -728,7 +730,7 @@ int main(int argc, char *argv[]) {
                     }
                 } */
                 
-                std::cout << "source address: " << inet_ntoa(source) << " destination address: " << inet_ntoa(destination) << std::endl;
+                std::cout << "source address: " << inet_ntoa(source) << ", destination address: " << inet_ntoa(destination) << std::endl;
 
                 // The checksum field is the 16 bit one's complement of the one's
                 // complement sum of all 16 bit words in the header.  For purposes of
