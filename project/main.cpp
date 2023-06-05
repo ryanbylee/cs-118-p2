@@ -49,34 +49,24 @@ int main(int argc, char *argv[]) {
     //counter needed for determining number of connections to accept
     int hostCounter = 0;
     
-    //parse IP configuration
-    while (1){
-        std::getline(std::cin, szLine);
-        if (szLine == ""){
-            break;
-        }
+    // parse IP configuration
+    std::getline(std::cin, szLine);
+    while (szLine != "") {
         IPClients[hostCounter] = szLine;
         hostCounter++;
-        
+        std::getline(std::cin, szLine);
     }
-
-
-
-    //parse Static NAPT table
+    
+    // parse Static NAPT table
     std::cout << "Parsing NAPT Table..." << std::endl;
     std::string delimiter = " ";
     std::string infoPerLine[3];
     int tableEntryNum = 0;
     int dynamicEntrynum = 0;
-
-    while (1){
+    
+    std::getline(std::cin, szLine);    
+    while (szLine != "") {
         napt_entry entry;
-        std::getline(std::cin, szLine);
-        if (szLine == ""){
-            break;
-        }
-        std::cout << szLine << std::endl;
-
         for (int i = 0; i < 3; i++){
             infoPerLine[i] = szLine.substr(0, szLine.find(delimiter));
             szLine.erase(0, szLine.find(delimiter) + delimiter.length());
@@ -89,12 +79,14 @@ int main(int argc, char *argv[]) {
 
         napt_table[tableEntryNum] = entry;
         tableEntryNum++;
-        
+        std::getline(std::cin, szLine);
     }
 
-    for (int i = 0; i < 2; i++){
-        std::cout << "entry " << i << ": " << napt_table[i].lan_ip << " " << napt_table[i].wan_ip << " " << napt_table[i].lan_port << " " << napt_table[i].wan_port << std::endl;
-    }
+    for (int i = 0; i < tableEntryNum; i++)
+        std::cout << "entry " << i << ": (" << napt_table[i].lan_ip << ", " 
+                                           << napt_table[i].lan_port << ") -> ("
+                                           << napt_table[i].wan_ip << ", " 
+                                           << napt_table[i].wan_port << ")" << std::endl;
 
     int listening_socket, new_socket, sd, max_sd;
     int activity, addrlen, valread;
@@ -178,21 +170,21 @@ int main(int argc, char *argv[]) {
             sd = c.second;
 
             if (sd > 0 && FD_ISSET(sd, &readfds)) {
+                std::cout << std::endl;
                 // Receive data from client if there is data
-                std::cout << "Receiving data from: " << c.first << std::endl;
                 valread = recv(sd, buffer, BUFFER_SIZE, 0);
                 if (valread == 0){
+                    std::cout << "Closing link: " << c.first << std::endl;
                     close(sd);
                     client_sockets[c.first] = 0;
                     break;
                 }
-                std::cout << "read: " << valread << " bytes" << std::endl;
+                std::cout << "Received " << valread << " bytes from " << c.first << std::endl;
                 buffer[valread] = '\0';  
 
-                //packet information extraction/analysis (snippet from 1b-starter-main.cpp)
+                // Packet information extraction/analysis (snippet from 1b-starter-main.cpp)
                 std::vector<uint8_t> pkt(buffer, buffer + valread);
                 auto incomingIpHdr = reinterpret_cast<iphdr*>(pkt.data());
-
                 auto hdrLen = static_cast<size_t>(incomingIpHdr->ihl) * 4;
 
                 auto incomingTcpHdr = reinterpret_cast<tcphdr*>(pkt.data() + hdrLen);
@@ -202,7 +194,6 @@ int main(int argc, char *argv[]) {
                 std::cout << "totalLen: "<< totLen << std::endl;
                 std::cout << "protocol: " << static_cast<size_t>(incomingIpHdr->protocol) << std::endl;
                 
-                std::cout << "headerLen: " << hdrLen << std::endl;
                 
                 auto ttl = static_cast<size_t>(incomingIpHdr->ttl);
                 std::cout << "ttl (before): " << ttl << std::endl;
