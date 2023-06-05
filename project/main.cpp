@@ -213,6 +213,15 @@ int main(int argc, char *argv[]) {
                 auto totLen = static_cast<size_t>(ntohs(incomingIpHdr->tot_len));
                 std::cout << "totalLen: "<< totLen << std::endl;                
                 
+                // calculate IP checksum
+                std::cout << "checksum (before): " << static_cast<size_t>(incomingIpHdr->check);
+                
+                uint16_t ipcheck = incomingIpHdr->check;
+                update_checksum(ipcheck, hdrLen, pkt.data());
+                std::cout << ", checksum (after): " << ipcheck << std::endl;
+                if (ipcheck != 0)
+                    break; /* drop if checksum doesn't match */
+                
                 auto ttl = static_cast<size_t>(incomingIpHdr->ttl);
                 std::cout << "ttl (before): " << ttl;
                 if (ttl <= 1)
@@ -220,16 +229,6 @@ int main(int argc, char *argv[]) {
                 incomingIpHdr->ttl -= 1;
                 ttl = static_cast<size_t>(incomingIpHdr->ttl);
                 cout << ", ttl (after): " << ttl << endl;
-                
-                // calculate IP checksum
-                auto checksumBefore = static_cast<size_t>(incomingIpHdr->check);
-                std::cout << "checksum (before): " << checksumBefore;
-                
-                update_checksum(incomingIpHdr->check, hdrLen, pkt.data());
-                
-                std::cout << ", checksum (after): " << incomingIpHdr->check << std::endl;
-                if (incomingIpHdr->check != 1)
-                    break; /* drop if checksum doesn't match */
                 
                 // source and destination IP addresses
                 struct in_addr source, destination;
