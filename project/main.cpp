@@ -55,8 +55,7 @@ int main(int argc, char *argv[]) {
         hostCounter++;
         
     }
-    //hardcode WAN address
-    IPClients[0] = "10.0.0.10";
+
 
 
     //parse Static NAPT table
@@ -211,10 +210,35 @@ int main(int argc, char *argv[]) {
                 ttl = static_cast<size_t>(incomingIpHdr->ttl);
                 cout << "ttl (after)" << ttl << endl;
 
-                std::cout << "checksum (before): " << incomingIpHdr->check << std::endl;
+                auto checksumBefore = static_cast<size_t>(incomingIpHdr->check);
+                std::cout << "checksum (before): " << checksumBefore << std::endl;
+                
                 
 
+                // The checksum field is the 16 bit one's complement of the one's
+                // complement sum of all 16 bit words in the header.  For purposes of
+                // computing the checksum, the value of the checksum field is zero.
+                uint32_t checksumAfter = 0;
+               
+                for (uint32_t i = 0; i < hdrLen; i += 2) {
+                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + i);
+                    checksumAfter += *headerword;
+                    // sum += ntohs(*headerword);
+                }
+                while (checksumAfter >> 16) {
+                    checksumAfter = (checksumAfter & 0xffff) + (checksumAfter >> 16);
+                }
+                // one's complement
+                checksumAfter = ~checksumAfter;
+                incomingIpHdr->check = checksumAfter;
+                // incomingIpHdr->check = htons(sum);
+                std::cout << "checksum (after): " << incomingIpHdr->check << std::endl;
                 // source and destination IP addresses
+
+                //drop if checksum doesn't match
+                if (!incomingIpHdr->check){
+                    break;
+                }
                 struct in_addr source, destination;
                 source.s_addr = incomingIpHdr->saddr;
                 destination.s_addr = incomingIpHdr->daddr;                                
@@ -225,7 +249,7 @@ int main(int argc, char *argv[]) {
 // struct format: lanip, wanip, lanPort, wanPort
 // if lan to lan don't need to translate anything
 
-
+                bool lanToWan = false;
 
 
                 // TCP or UDP protocol
@@ -238,10 +262,15 @@ int main(int argc, char *argv[]) {
                     if (inet_ntoa(source) == szLanIp && inet_ntoa(destination) == szLanIp) {
                         // do nothing
                     }
+                    // wait this is kinda tricky. bc dest can not be LAN but still be in the NAPT table
+                    // then should we handle it inside the else section where we actually loop through napt table
+                    // probably yea
+                    
                     else {
                         for (int i = 0; i < tableEntryNum; i++) {
                             // sending from LAN; need to change to WAN
                             if (inet_ntoa(source) == napt_table[i].lan_ip && ntohs(incomingTcpHdr->th_sport) == napt_table[i].lan_port) {
+                                lanToWan = true;
                                 // sanity check
                                 auto oldSourcePort = static_cast<size_t>(ntohs(incomingTcpHdr->th_sport));
                                 // change the addresses
@@ -260,22 +289,29 @@ int main(int argc, char *argv[]) {
                                 
                                 incomingTcpHdr->th_sum = 0;
                                 uint32_t i = 0;
-                                for (; i < tcpHdrLen; i += 2) {
+                                for (; i < totLen - hdrLen - 1; i += 2) {
                                     auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
                                     tcpsum += *headerword;
                                     // sum += ntohs(*headerword);
                                 }
-                                // if (i == htons(incomingUdpHdr->uh_ulen) + 1){
-                                //     auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
-                                //     udpsum += ((*headerword)&htons(0xFF00));
-                                // }
+
+                                // what is this checking for?? is it if the TCP segment is odd
+                                // ohh so then can we just pull the for loop conditional and use that?
+                                // it would be i + 1 == _____ tho right? ohhhhh no nvm yea bc if totLen-hdrLen = 25; then i would end up on 26 yes!
+                                // the reason i pulled iterator variable out of loop was bc of this if statement
+                                // so in the for loop above we increment by 2, and if the data is odd then we can't
+                                // yeah i dont think i touched this code since we changed the condition so it's outdated
+                                if ((totLen - hdrLen)%2){
+                                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i ); //not sure about here; i think that makes sense
+                                    tcpsum += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
+                                }
                                 //add pseudo header
                                 tcpsum += (incomingIpHdr->saddr>>16) & 0xFFFF;
                                 tcpsum += (incomingIpHdr->saddr) & 0xFFFF;
                                 tcpsum += (incomingIpHdr->daddr>>16) & 0xFFFF;
                                 tcpsum += (incomingIpHdr->daddr) & 0xFFFF;
                                 tcpsum += htons(IPPROTO_TCP); //TCP protocol num 
-                                tcpsum += totLen - hdrLen; //tcp header + payload
+                                tcpsum += htons(totLen - hdrLen); //tcp header + payload
                                 
                                 while (tcpsum >> 16) {
                                     tcpsum = (tcpsum & 0xffff) + (tcpsum >> 16);
@@ -305,22 +341,22 @@ int main(int argc, char *argv[]) {
                                 
                                 incomingTcpHdr->th_sum = 0;
                                 uint32_t i = 0;
-                                for (; i < tcpHdrLen; i += 2) {
+                                for (; i < totLen - hdrLen - 1; i += 2) {
                                     auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
                                     tcpsum += *headerword;
                                     // sum += ntohs(*headerword);
                                 }
-                                // if (i == htons(incomingUdpHdr->uh_ulen) + 1){
-                                //     auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
-                                //     udpsum += ((*headerword)&htons(0xFF00));
-                                // }
+                                if ((totLen - hdrLen)%2){
+                                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i ); //not sure about here; i think that makes sense
+                                    tcpsum += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
+                                }
                                 //add pseudo header
                                 tcpsum += (incomingIpHdr->saddr>>16) & 0xFFFF;
                                 tcpsum += (incomingIpHdr->saddr) & 0xFFFF;
                                 tcpsum += (incomingIpHdr->daddr>>16) & 0xFFFF;
                                 tcpsum += (incomingIpHdr->daddr) & 0xFFFF;
                                 tcpsum += htons(IPPROTO_TCP); //TCP protocol num 
-                                tcpsum += totLen - hdrLen; //tcp header + payload
+                                tcpsum += htons(totLen - hdrLen); //tcp header + payload
                                 
                                 while (tcpsum >> 16) {
                                     tcpsum = (tcpsum & 0xffff) + (tcpsum >> 16);
@@ -347,6 +383,7 @@ int main(int argc, char *argv[]) {
                             // tcpsum = ~tcpsum;
                             // incomingTcpHdr->th_sum = tcpsum;
                         }
+
                     }
 ////////////////////////////////////////////////////////////////////////////////////////////////////
                     auto sourcePort = static_cast<size_t>(ntohs(incomingTcpHdr->th_sport));
@@ -370,6 +407,7 @@ int main(int argc, char *argv[]) {
                             // sending from LAN; need to change to WAN
                             if (inet_ntoa(source) == napt_table[i].lan_ip && ntohs(incomingUdpHdr->uh_sport) == napt_table[i].lan_port) {
                                 // sanity check
+                                lanToWan = true;
                                 auto oldSourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
                                 // change the addresses
                                 inet_aton(napt_table[i].wan_ip.c_str(), &source); // new addr is stored in source.s_addr
@@ -388,15 +426,15 @@ int main(int argc, char *argv[]) {
                                 uint32_t udpsum = 0;
                                 incomingUdpHdr->uh_sum = 0;
                                 uint32_t i = 0;
-                                for (; i < htons(incomingUdpHdr->uh_ulen); i += 2) {
+                                for (; i < totLen - hdrLen - 1; i += 2) {
                                     auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
                                     udpsum += *headerword;
                                     // sum += ntohs(*headerword);
                                 }
-                                // if (i == htons(incomingUdpHdr->uh_ulen) + 1){
-                                //     auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
-                                //     udpsum += ((*headerword)&htons(0xFF00));
-                                // }
+                                if ((totLen - hdrLen)%2){
+                                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i ); //not sure about here; i think that makes sense
+                                    udpsum += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
+                                }
                                 //add pseudo header
                                 udpsum += (incomingIpHdr->saddr>>16) & 0xFFFF;
                                 udpsum += (incomingIpHdr->saddr) & 0xFFFF;
@@ -432,7 +470,7 @@ int main(int argc, char *argv[]) {
                                 uint32_t udpsum = 0;
                                 incomingUdpHdr->uh_sum = 0;
                                 uint32_t i = 0;
-                                for (; i < htons(incomingUdpHdr->uh_ulen); i += 2) {
+                                for (; i < totLen - hdrLen - 1; i += 2) {
                                     auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
                                     udpsum += *headerword;
                                     // sum += ntohs(*headerword);
@@ -442,10 +480,10 @@ int main(int argc, char *argv[]) {
                                     // so then now we need stuff in the psuedo header; i do think UDP length gets added twice
                                     //udpheader + payload 
                                 }
-                                // if (i == htons(incomingUdpHdr->uh_ulen) + 1){
-                                //     auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
-                                //     udpsum += ((*headerword)&htons(0xFF00));
-                                // }
+                                if ((totLen - hdrLen)%2){
+                                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i ); //not sure about here; i think that makes sense
+                                    udpsum += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
+                                }
                                 
                                 udpsum += (incomingIpHdr->saddr>>16) & 0xFFFF;
                                 udpsum += (incomingIpHdr->saddr) & 0xFFFF;
@@ -511,6 +549,12 @@ int main(int argc, char *argv[]) {
                 incomingIpHdr->check = sum;
                 // incomingIpHdr->check = htons(sum);
                 std::cout << "checksum (after): " << incomingIpHdr->check << std::endl;
+                
+                if (lanToWan){
+                    cout << "lanToWan is True" << endl;
+                    inet_aton("0.0.0.0", &destination);
+                }
+
                 if(send(client_sockets[inet_ntoa(destination)], incomingIpHdr, hdrLen, 0) == -1)
                 {
                     perror("send");
