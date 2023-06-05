@@ -17,7 +17,7 @@
 using namespace std;
 
 #define MAXCLIENTS 30
-#define BUFFER_SIZE 2048
+#define BUFFER_SIZE 10240
 #define DEFAULT_PORT 5152
 #define DYNAMIC_PORT_START 49152
 
