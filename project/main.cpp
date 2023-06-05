@@ -219,11 +219,15 @@ int main(int argc, char *argv[]) {
                 // complement sum of all 16 bit words in the header.  For purposes of
                 // computing the checksum, the value of the checksum field is zero.
                 uint32_t checksumAfter = 0;
-               
-                for (uint32_t i = 0; i < hdrLen; i += 2) {
+                uint32_t i = 0;
+                for (i = 0; i < hdrLen - 1; i += 2) {
                     auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + i);
                     checksumAfter += *headerword;
                     // sum += ntohs(*headerword);
+                }
+                if ((hdrLen)%2){
+                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + i ); //not sure about here; i think that makes sense
+                    checksumAfter += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
                 }
                 while (checksumAfter >> 16) {
                     checksumAfter = (checksumAfter & 0xffff) + (checksumAfter >> 16);
@@ -236,7 +240,7 @@ int main(int argc, char *argv[]) {
                 // source and destination IP addresses
 
                 //drop if checksum doesn't match
-                if (!incomingIpHdr->check){
+                if (incomingIpHdr->check != 1){
                     break;
                 }
                 struct in_addr source, destination;
@@ -259,8 +263,10 @@ int main(int argc, char *argv[]) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
                     // NAPT magic
                         // inet_ntoa(source) != "10.0.0.10" && inet_ntoa(destination) != "10.0.0.10"
-                    if (inet_ntoa(source) == szLanIp && inet_ntoa(destination) == szLanIp) {
-                        // do nothing
+                    //The server drops unrecognized packets sent from WAN. (5 pt)
+                    bool recognized = false;
+                    if (inet_netof(source) == inet_netof(destination)) {
+                        recognized = true;
                     }
                     // wait this is kinda tricky. bc dest can not be LAN but still be in the NAPT table
                     // then should we handle it inside the else section where we actually loop through napt table
@@ -268,6 +274,8 @@ int main(int argc, char *argv[]) {
                     
                     else {
                         for (int i = 0; i < tableEntryNum; i++) {
+                            
+
                             // sending from LAN; need to change to WAN
                             if (inet_ntoa(source) == napt_table[i].lan_ip && ntohs(incomingTcpHdr->th_sport) == napt_table[i].lan_port) {
                                 lanToWan = true;
@@ -320,6 +328,7 @@ int main(int argc, char *argv[]) {
                                 tcpsum = ~tcpsum;
                                 incomingTcpHdr->th_sum = tcpsum;
                                 cout << "tcpchecksum: " << incomingTcpHdr->th_sum << endl;
+                                recognized = true;
                                 break;
                             }
                             // receiving from WAN; need to change to LAN
@@ -365,8 +374,11 @@ int main(int argc, char *argv[]) {
                                 tcpsum = ~tcpsum;
                                 incomingTcpHdr->th_sum = tcpsum;
                                 cout << "tcpchecksum: " << incomingTcpHdr->th_sum << endl;
+                                recognized = true;
                                 break;
                             }
+                                
+                            
 
                             //checksum calculation for TCP
                             // uint32_t tcpsum = 0;
@@ -383,6 +395,8 @@ int main(int argc, char *argv[]) {
                             // tcpsum = ~tcpsum;
                             // incomingTcpHdr->th_sum = tcpsum;
                         }
+                        
+                        
 
                     }
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -392,15 +406,19 @@ int main(int argc, char *argv[]) {
                   
                     std::cout << "payloadLen: "<< totLen - hdrLen - tcpHdrLen << std::endl;
 
-                    
+                    if (!recognized){
+                        break;
+                    }
                 }
+                
                 else if (incomingIpHdr->protocol == IPPROTO_UDP) {
                     std::cout << "This is a UDP packet" << std::endl;
                     
 ////////////////////////////////////////////////////////////////////////////////////////////////////
                     // NAPT magic
-                    if (inet_ntoa(source) == szLanIp && inet_ntoa(destination) == szLanIp) {
-                        // do nothing
+                    bool recognized = false;
+                    if (inet_netof(source) == inet_netof(destination)) {
+                        recognized = true;
                     }
                     else {
                         for (int i = 0; i < tableEntryNum; i++) {
@@ -449,6 +467,7 @@ int main(int argc, char *argv[]) {
                                 udpsum = ~udpsum;
                                 incomingUdpHdr->uh_sum = udpsum;
                                 cout << "udpchecksum: " << incomingUdpHdr->uh_sum << endl;
+                                recognized = true;
                                 break;
                             }
                             // receiving from WAN; need to change to LAN
@@ -515,17 +534,18 @@ int main(int argc, char *argv[]) {
                                 udpsum = ~udpsum;
                                 incomingUdpHdr->uh_sum = udpsum;
                                 cout << "udpchecksum: " << incomingUdpHdr->uh_sum << endl;
+                                recognized = true;
                                 break;
                             }
-
-                           
-                            
                         }
                     }
 ////////////////////////////////////////////////////////////////////////////////////////////////////
                     auto sourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
                     auto destPort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_dport));
                     std::cout << "sourcePort: "<< sourcePort << " destPort: "<< destPort << std::endl;
+                    if (!recognized){
+                        break;
+                    }
                 }
                 
                 
@@ -536,10 +556,15 @@ int main(int argc, char *argv[]) {
                 // computing the checksum, the value of the checksum field is zero.
                 uint32_t sum = 0;
                 incomingIpHdr->check = 0;
-                for (uint32_t i = 0; i < hdrLen; i += 2) {
-                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + i);
+                uint32_t j = 0;
+                for (; j < hdrLen - 1; j += 2) {
+                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + j);
                     sum += *headerword;
                     // sum += ntohs(*headerword);
+                }
+                if ((hdrLen)%2){
+                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + j ); //not sure about here; i think that makes sense
+                    sum += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
                 }
                 while (sum >> 16) {
                     sum = (sum & 0xffff) + (sum >> 16);
