@@ -3,6 +3,72 @@
 This is the repo for spring23 cs118 project 2.
 The Docker environment has the same setting with project 0.
 
+## Project Report
+
+### <ins>Team members:</ins>
+- Lime Yao (UID: ___ ___ ___)
+- Ryan Lee (UID: ___ ___ ___)
+- Trung Vu (UID: 705 586 785)
+
+### <ins>High level decription of router</ins>
+This project simulates a virtual home router by using NAT/NAPT to separate the Internet (WAN) from the home network (LAN).
+
+We started our program as a server that listens to port 5152 and accepts multiple connections. We receive IPv4 packets through these connections and have to forward, rewrite, or drop them depending on the context. When we detect there to be incoming data from a client, we receive the packet information and analyze it.  
+### <ins>Problems ran into and how we solved them</ins>
+- How exactly select() worked
+  - Going to discussion section helped us figure this out
+- Bind: address already in use
+  - Set the option SO_REUSEADDR to allow the reuse of local addresses 
+  - Set the option SO_REUSEPORT to allow multiple sockets to be bound to an indentical socket address 
+- Misunderstanding 10.0.0.10
+  - Initially thought that 10.0.0.10 represented WAN IP address 0.0.0.0. It does not. 10.0.0.10 is simply a random address outside the local network. When sending from LAN to address outside LAN, forward to WAN.
+- How to understand the hex code output when running into an error on local tests
+  - Used the RFC files linked on the project spec and broke down what each hex code corresponded to.
+  - We then used packet_generate.py to see what output we should be expecting when running the local tests. This helped us understand what exactly we were getting wrong (i.e. src/dest addr, TCP/UDP checksum, etc.)
+- Understanding the format of the data
+  - We didn't know where the TCP/UDP header started in relation to the IP header
+  - We did some digging into textbooks, websites, and etc. to learn the following:
+    - We have IP header
+    - Payload of IP header is the TCP/UDP
+    - TCP/UDP header starts at the beginning of IP payload
+    - TCP/UDP payloads starts at the end of the TCP/UDP header
+- Dropping packets based on ttl value
+  - We were decrementing ttl, but didn't know when to drop the packet. You drop packet when ttl <= 1
+- NAPT table coding
+  - We first programmed the NAPT table to fit for static NAPT cases. Modifying the NAPT code to fit the dynamic NAPT cases proved difficult because the original code we wrote was fairly messy and inflexible
+  - We rewrote the code for the NAPT table, separating certain sections, creating helper functions for repeating code, and taking a different approach that accomodated both static and dynamic cases
+- Sending the updated data
+  - Our approach extracted data and put it into local variables of type iphdr and tcphdr/udphdr so we can use the properties of those types to easily update the fields we needed to update (i.e. checksum, port, src/dest addr, etc.). We proceeded to update these local variables, but ultimately sent the unmodified data instead.
+  - Understanding that we were sending the wrong data, we not bumped into another issue. We had two things we had to send: (1) iphdr (2) tcphdr/ucphdr. We decided to use send() twice. Once for iphdr and another for either tcphdr or udphdr.
+- Checksum calculation incorrect
+  - We realized we used uint32_t when we should've been using uint16_t
+  - We didn't understand what exactly we had to include when calculating UDP/TCP checksum. Watching YouTube videos and going through Piazza helped us understand what we had to include.
+  - We only parsed the UDP/TCP header and NOT the payload when calculating checksum. Modifying the code to parse through the UDP/TCP payload solved this issue.
+  - We never accounted for payloads or headers having an odd length. Adding code to get the last 8-bits of a payload or header and using bit-masking to add the correct value to checksum solved the issue.
+  - We parsed the UDP/TCP header and payload incorrectly. We discovered it was a silly for-loop conditional mistake and upon fixing it, we got the code to work properly.
+
+### <ins>Acknowledgement of any online tutorials or code examples (except class website) in no particular order</ins>
+- Handling multiple connections using select()
+  - https://www.geeksforgeeks.org/socket-programming-in-cc-handling-multiple-clients-on-server-without-multi-threading/#
+- Calculating UDP checksum
+  - https://www.youtube.com/watch?v=rYVHBICiiEc
+- Calculating checksum when payload is odd length (expired site contents put on github link)
+  - https://stackoverflow.com/questions/8845178/c-programming-tcp-checksum/51269953#51269953
+  - https://gist.github.com/david-hoze/0c7021434796997a4ca42d7731a7073a
+- Start code from TA
+  - 1b-starter-main.cpp (found in Bruinlearn)
+- Man pages for libraries and functions
+  - https://man7.org/linux/man-pages/man7/socket.7.html
+  - https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.7-4.6/+/refs/heads/tools_r20/sysroot/usr/include/netinet/ip.h
+  - https://android.googlesource.com/platform/bionic/+/f8a2243/libc/include/netinet/udp.h
+  - https://android.googlesource.com/platform/bionic/+/master/libc/include/netinet/tcp.h
+- Packet format files linked on Project Spec
+  - https://datatracker.ietf.org/doc/html/rfc791
+  - https://www.rfc-editor.org/rfc/rfc768.html
+  - https://www.rfc-editor.org/rfc/rfc9293.html
+
+###########################################################
+
 ## Academic Integrity Note
 
 You are encouraged to host your code in private repositories on [GitHub](https://github.com/), [GitLab](https://gitlab.com), or other places.  At the same time, you are PROHIBITED to make your code for the class project public during the class or any time after the class.  If you do so, you will be violating academic honestly policy that you have signed, as well as the student code of conduct and be subject to serious sanctions.
@@ -132,11 +198,3 @@ python3 grader/packet_generate.py < scenarios/setting1.json
   They do not cover all edge cases that we want to test.
 - The autograder will only build your program in the `project` folder, and grade the built `server` executable.
   Your program should not depend on other files to run.
-
-## TODO
-
-    ###########################################################
-    ##                                                       ##
-    ## REPLACE CONTENT OF THIS FILE WITH YOUR PROJECT REPORT ##
-    ##                                                       ##
-    ###########################################################
