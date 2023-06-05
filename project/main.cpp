@@ -19,6 +19,7 @@ using namespace std;
 #define MAXCLIENTS 30
 #define BUFFER_SIZE 2048
 #define DEFAULT_PORT 5152
+#define DYNAMIC_PORT_START 49152
 
 //information contained in each entry in NAPT table
 struct napt_entry{
@@ -39,6 +40,9 @@ int main(int argc, char *argv[]) {
     
     std::cout << "Server's LAN IP: " << szLanIp << std::endl
               << "Server's WAN IP: " << szWanIp << std::endl;
+
+    struct in_addr lanIP;
+    inet_aton(szLanIp.c_str(), &lanIP);    
     
     std::string IPClients[MAXCLIENTS];
     napt_entry napt_table[MAXCLIENTS];
@@ -63,6 +67,7 @@ int main(int argc, char *argv[]) {
     std::string delimiter = " ";
     std::string infoPerLine[3];
     int tableEntryNum = 0;
+    int dynamicEntrynum = 0;
 
     while (1){
         napt_entry entry;
@@ -168,6 +173,7 @@ int main(int argc, char *argv[]) {
         
         // Check the connection sockets to see if there is incoming data from
         // each client
+        
         for (const auto &c: client_sockets) {
             sd = c.second;
 
@@ -254,7 +260,7 @@ int main(int argc, char *argv[]) {
 // if lan to lan don't need to translate anything
 
                 bool lanToWan = false;
-
+                
 
                 // TCP or UDP protocol
                 if (incomingIpHdr->protocol == IPPROTO_TCP) {
@@ -271,66 +277,94 @@ int main(int argc, char *argv[]) {
                     // wait this is kinda tricky. bc dest can not be LAN but still be in the NAPT table
                     // then should we handle it inside the else section where we actually loop through napt table
                     // probably yea
+                    // oh btw we didn't end up doing this
                     
                     else {
+                        bool ipMatched = false;
+                        bool portMatched = false;
+                        for (int i = 0; i < tableEntryNum; i++){
+                            if (inet_ntoa(source) == napt_table[i].lan_ip){
+                                ipMatched = true;
+                                if (ntohs(incomingTcpHdr->th_sport) == napt_table[i].lan_port){
+                                    portMatched = true;
+                                }
+                            }
+                        }
+                        if (!portMatched && (inet_netof(source) == inet_netof(lanIP))){
+                            napt_entry entry;
+                            entry.lan_ip = inet_ntoa(source);
+                            entry.lan_port = ntohs(incomingTcpHdr->th_sport);
+                            entry.wan_ip = szWanIp;
+                            entry.wan_port = DYNAMIC_PORT_START + dynamicEntrynum;
+                            napt_table[tableEntryNum] = entry;
+                            tableEntryNum++;
+                            dynamicEntrynum++;
+                            for (int i = 0; i < tableEntryNum; i++){
+                                std::cout << "entry " << i << ": " << napt_table[i].lan_ip << " " << napt_table[i].wan_ip << " " << napt_table[i].lan_port << " " << napt_table[i].wan_port << std::endl;
+                            }
+                        }
                         for (int i = 0; i < tableEntryNum; i++) {
                             
-
+                            
                             // sending from LAN; need to change to WAN
-                            if (inet_ntoa(source) == napt_table[i].lan_ip && ntohs(incomingTcpHdr->th_sport) == napt_table[i].lan_port) {
-                                lanToWan = true;
-                                // sanity check
-                                auto oldSourcePort = static_cast<size_t>(ntohs(incomingTcpHdr->th_sport));
-                                // change the addresses
-                                inet_aton(napt_table[i].wan_ip.c_str(), &source); // new addr is stored in source.s_addr
-                                incomingIpHdr->saddr = source.s_addr;
-                                // change the ports
-                                incomingTcpHdr->th_sport = htons(napt_table[i].wan_port);
-                                // check the outputs
-                                
-                                //TODO: FIX 
-                                auto newSourcePort = static_cast<size_t>(ntohs(incomingTcpHdr->th_sport));
-                                std::cout << "translate: previousAddr= " << inet_ntoa(source) << ", currentAddr= " << inet_ntoa(source) << std::endl;
-                                std::cout << "translate: previousPort= " << oldSourcePort << ", currentPort= " << newSourcePort << std::endl;
-                                //checksum calculation for tcp
-                                uint32_t tcpsum = 0;
-                                
-                                incomingTcpHdr->th_sum = 0;
-                                uint32_t i = 0;
-                                for (; i < totLen - hdrLen - 1; i += 2) {
-                                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
-                                    tcpsum += *headerword;
-                                    // sum += ntohs(*headerword);
-                                }
+                            if (inet_ntoa(source) == napt_table[i].lan_ip){
+                                //ipMatched = true;
+                                if (ntohs(incomingTcpHdr->th_sport) == napt_table[i].lan_port) {
+                                    //portMatched = true;
+                                    lanToWan = true;
+                                    // sanity check
+                                    auto oldSourcePort = static_cast<size_t>(ntohs(incomingTcpHdr->th_sport));
+                                    // change the addresses
+                                    inet_aton(napt_table[i].wan_ip.c_str(), &source); // new addr is stored in source.s_addr
+                                    incomingIpHdr->saddr = source.s_addr;
+                                    // change the ports
+                                    incomingTcpHdr->th_sport = htons(napt_table[i].wan_port);
+                                    // check the outputs
+                                    
+                                    //TODO: FIX 
+                                    auto newSourcePort = static_cast<size_t>(ntohs(incomingTcpHdr->th_sport));
+                                    std::cout << "translate: previousAddr= " << inet_ntoa(source) << ", currentAddr= " << inet_ntoa(source) << std::endl;
+                                    std::cout << "translate: previousPort= " << oldSourcePort << ", currentPort= " << newSourcePort << std::endl;
+                                    //checksum calculation for tcp
+                                    uint32_t tcpsum = 0;
+                                    
+                                    incomingTcpHdr->th_sum = 0;
+                                    uint32_t i = 0;
+                                    for (; i < totLen - hdrLen - 1; i += 2) {
+                                        auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
+                                        tcpsum += *headerword;
+                                        // sum += ntohs(*headerword);
+                                    }
 
-                                // what is this checking for?? is it if the TCP segment is odd
-                                // ohh so then can we just pull the for loop conditional and use that?
-                                // it would be i + 1 == _____ tho right? ohhhhh no nvm yea bc if totLen-hdrLen = 25; then i would end up on 26 yes!
-                                // the reason i pulled iterator variable out of loop was bc of this if statement
-                                // so in the for loop above we increment by 2, and if the data is odd then we can't
-                                // yeah i dont think i touched this code since we changed the condition so it's outdated
-                                if ((totLen - hdrLen)%2){
-                                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i ); //not sure about here; i think that makes sense
-                                    tcpsum += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
+                                    // what is this checking for?? is it if the TCP segment is odd
+                                    // ohh so then can we just pull the for loop conditional and use that?
+                                    // it would be i + 1 == _____ tho right? ohhhhh no nvm yea bc if totLen-hdrLen = 25; then i would end up on 26 yes!
+                                    // the reason i pulled iterator variable out of loop was bc of this if statement
+                                    // so in the for loop above we increment by 2, and if the data is odd then we can't
+                                    // yeah i dont think i touched this code since we changed the condition so it's outdated
+                                    if ((totLen - hdrLen)%2){
+                                        auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i ); //not sure about here; i think that makes sense
+                                        tcpsum += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
+                                    }
+                                    //add pseudo header
+                                    tcpsum += (incomingIpHdr->saddr>>16) & 0xFFFF;
+                                    tcpsum += (incomingIpHdr->saddr) & 0xFFFF;
+                                    tcpsum += (incomingIpHdr->daddr>>16) & 0xFFFF;
+                                    tcpsum += (incomingIpHdr->daddr) & 0xFFFF;
+                                    tcpsum += htons(IPPROTO_TCP); //TCP protocol num 
+                                    tcpsum += htons(totLen - hdrLen); //tcp header + payload
+                                    
+                                    while (tcpsum >> 16) {
+                                        tcpsum = (tcpsum & 0xffff) + (tcpsum >> 16);
+                                    }
+                                    // one's complement
+                                    tcpsum = ~tcpsum;
+                                    incomingTcpHdr->th_sum = tcpsum;
+                                    cout << "tcpchecksum: " << incomingTcpHdr->th_sum << endl;
+                                    recognized = true;
+                                    break;
                                 }
-                                //add pseudo header
-                                tcpsum += (incomingIpHdr->saddr>>16) & 0xFFFF;
-                                tcpsum += (incomingIpHdr->saddr) & 0xFFFF;
-                                tcpsum += (incomingIpHdr->daddr>>16) & 0xFFFF;
-                                tcpsum += (incomingIpHdr->daddr) & 0xFFFF;
-                                tcpsum += htons(IPPROTO_TCP); //TCP protocol num 
-                                tcpsum += htons(totLen - hdrLen); //tcp header + payload
-                                
-                                while (tcpsum >> 16) {
-                                    tcpsum = (tcpsum & 0xffff) + (tcpsum >> 16);
-                                }
-                                // one's complement
-                                tcpsum = ~tcpsum;
-                                incomingTcpHdr->th_sum = tcpsum;
-                                cout << "tcpchecksum: " << incomingTcpHdr->th_sum << endl;
-                                recognized = true;
-                                break;
-                            }
+                            } 
                             // receiving from WAN; need to change to LAN
                             else if (inet_ntoa(destination) == napt_table[i].wan_ip && ntohs(incomingTcpHdr->th_dport) == napt_table[i].wan_port) {
                                 // sanity check
@@ -377,8 +411,9 @@ int main(int argc, char *argv[]) {
                                 recognized = true;
                                 break;
                             }
+
                                 
-                            
+                        
 
                             //checksum calculation for TCP
                             // uint32_t tcpsum = 0;
@@ -395,8 +430,7 @@ int main(int argc, char *argv[]) {
                             // tcpsum = ~tcpsum;
                             // incomingTcpHdr->th_sum = tcpsum;
                         }
-                        
-                        
+                   
 
                     }
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -421,54 +455,84 @@ int main(int argc, char *argv[]) {
                         recognized = true;
                     }
                     else {
+                        bool ipMatched = false;
+                        bool portMatched = false;
+                        
+                        
+                        for (int i = 0; i < tableEntryNum; i++){
+                            if (inet_ntoa(source) == napt_table[i].lan_ip){
+                                ipMatched = true;
+                                if (ntohs(incomingUdpHdr->uh_sport) == napt_table[i].lan_port){
+                                    portMatched = true;
+                                }
+                            }
+                        }
+                        if (!portMatched && (inet_netof(source) == inet_netof(lanIP))){
+                            napt_entry entry;
+                            entry.lan_ip = inet_ntoa(source);
+                            entry.lan_port = ntohs(incomingUdpHdr->uh_sport);
+                            entry.wan_ip = szWanIp;
+                            entry.wan_port = DYNAMIC_PORT_START + dynamicEntrynum;
+                            napt_table[tableEntryNum] = entry;
+                            tableEntryNum++;
+                            dynamicEntrynum++;
+                            for (int i = 0; i < tableEntryNum; i++){
+                                std::cout << "entry " << i << ": " << napt_table[i].lan_ip << " " << napt_table[i].wan_ip << " " << napt_table[i].lan_port << " " << napt_table[i].wan_port << std::endl;
+                            }
+                        }
                         for (int i = 0; i < tableEntryNum; i++) {
+                            cout << "entering UDP for loop" << endl;
                             // sending from LAN; need to change to WAN
-                            if (inet_ntoa(source) == napt_table[i].lan_ip && ntohs(incomingUdpHdr->uh_sport) == napt_table[i].lan_port) {
-                                // sanity check
-                                lanToWan = true;
-                                auto oldSourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
-                                // change the addresses
-                                inet_aton(napt_table[i].wan_ip.c_str(), &source); // new addr is stored in source.s_addr
-                                incomingIpHdr->saddr = source.s_addr;
-                                // change the ports
-                                incomingUdpHdr->uh_sport = htons(napt_table[i].wan_port);
-                                // check the outputs
-                                
-                                //TODO: FIX 
-                                auto newSourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
-                                std::cout << "translate: previousAddr= " << inet_ntoa(source) << ", currentAddr= " << inet_ntoa(source) << std::endl;
-                                std::cout << "translate: previousPort= " << oldSourcePort << ", currentPort= " << newSourcePort << std::endl;
-                                
-                                
-                                 //checksum calculation for udp
-                                uint32_t udpsum = 0;
-                                incomingUdpHdr->uh_sum = 0;
-                                uint32_t i = 0;
-                                for (; i < totLen - hdrLen - 1; i += 2) {
-                                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
-                                    udpsum += *headerword;
-                                    // sum += ntohs(*headerword);
+                            if (inet_ntoa(source) == napt_table[i].lan_ip){
+                                //ipMatched = true;
+                                if (ntohs(incomingUdpHdr->uh_sport) == napt_table[i].lan_port){
+                                    //portMatched = true;
+                                    // sanity check
+                                    lanToWan = true;
+                                    auto oldSourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
+                                    // change the addresses
+                                    inet_aton(napt_table[i].wan_ip.c_str(), &source); // new addr is stored in source.s_addr
+                                    incomingIpHdr->saddr = source.s_addr;
+                                    // change the ports
+                                    incomingUdpHdr->uh_sport = htons(napt_table[i].wan_port);
+                                    // check the outputs
+                                    
+                                    //TODO: FIX 
+                                    auto newSourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
+                                    std::cout << "translate: previousAddr= " << inet_ntoa(source) << ", currentAddr= " << inet_ntoa(source) << std::endl;
+                                    std::cout << "translate: previousPort= " << oldSourcePort << ", currentPort= " << newSourcePort << std::endl;
+                                    
+                                    
+                                    //checksum calculation for udp
+                                    uint32_t udpsum = 0;
+                                    incomingUdpHdr->uh_sum = 0;
+                                    uint32_t i = 0;
+                                    for (; i < totLen - hdrLen - 1; i += 2) {
+                                        auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i);
+                                        udpsum += *headerword;
+                                        // sum += ntohs(*headerword);
+                                    }
+                                    if ((totLen - hdrLen)%2){
+                                        auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i ); //not sure about here; i think that makes sense
+                                        udpsum += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
+                                    }
+                                    //add pseudo header
+                                    udpsum += (incomingIpHdr->saddr>>16) & 0xFFFF;
+                                    udpsum += (incomingIpHdr->saddr) & 0xFFFF;
+                                    udpsum += (incomingIpHdr->daddr>>16) & 0xFFFF;
+                                    udpsum += (incomingIpHdr->daddr) & 0xFFFF;
+                                    udpsum += htons(IPPROTO_UDP); //UDP protocol num 17
+                                    udpsum += incomingUdpHdr->uh_ulen;
+                                    while (udpsum >> 16) {
+                                        udpsum = (udpsum & 0xffff) + (udpsum >> 16);
+                                    }
+                                    // one's complement
+                                    udpsum = ~udpsum;
+                                    incomingUdpHdr->uh_sum = udpsum;
+                                    cout << "udpchecksum: " << incomingUdpHdr->uh_sum << endl;
+                                    recognized = true;
+                                    break;
                                 }
-                                if ((totLen - hdrLen)%2){
-                                    auto headerword = reinterpret_cast<uint16_t*>(pkt.data() + hdrLen + i ); //not sure about here; i think that makes sense
-                                    udpsum += (*headerword)&htons(0xFF00); // i think?? the rest should be fine let me run it
-                                }
-                                //add pseudo header
-                                udpsum += (incomingIpHdr->saddr>>16) & 0xFFFF;
-                                udpsum += (incomingIpHdr->saddr) & 0xFFFF;
-                                udpsum += (incomingIpHdr->daddr>>16) & 0xFFFF;
-                                udpsum += (incomingIpHdr->daddr) & 0xFFFF;
-                                udpsum += htons(IPPROTO_UDP); //UDP protocol num 17
-                                udpsum += incomingUdpHdr->uh_ulen;
-                                while (udpsum >> 16) {
-                                    udpsum = (udpsum & 0xffff) + (udpsum >> 16);
-                                }
-                                // one's complement
-                                udpsum = ~udpsum;
-                                incomingUdpHdr->uh_sum = udpsum;
-                                cout << "udpchecksum: " << incomingUdpHdr->uh_sum << endl;
-                                recognized = true;
-                                break;
                             }
                             // receiving from WAN; need to change to LAN
                             else if (inet_ntoa(destination) == napt_table[i].wan_ip && ntohs(incomingUdpHdr->uh_dport) == napt_table[i].wan_port) {
@@ -536,8 +600,11 @@ int main(int argc, char *argv[]) {
                                 cout << "udpchecksum: " << incomingUdpHdr->uh_sum << endl;
                                 recognized = true;
                                 break;
+                            
                             }
+                            
                         }
+                        
                     }
 ////////////////////////////////////////////////////////////////////////////////////////////////////
                     auto sourcePort = static_cast<size_t>(ntohs(incomingUdpHdr->uh_sport));
@@ -576,7 +643,7 @@ int main(int argc, char *argv[]) {
                 std::cout << "checksum (after): " << incomingIpHdr->check << std::endl;
                 
                 if (lanToWan){
-                    cout << "lanToWan is True" << endl;
+                    std::cout << "lanToWan is True" << std::endl;
                     inet_aton("0.0.0.0", &destination);
                 }
 
